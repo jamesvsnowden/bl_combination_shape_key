@@ -1,0 +1,13 @@
+site_name: Combination Shape Keys
+repo_url: https://github.com/jamesvsnowden/bl_combination_shape_key
+edit_uri: edit/main/docs/
+site_description: Combination shape keys for Blender
+site_author: James Snowden
+nav:
+  - About: 'index.md'
+  - Installation: 'installation.md'
+  - Guide: 'guide.md'
+  - Contact: 'contact.md'
+theme:
+  name: readthedocs
+  locale: en
