@@ -4,3 +4,6 @@
 [submodule "lib/driver_utils"]
 	path = lib/driver_utils
 	url = https://github.com/jamesvsnowden/bl_driver_utils.git
+[submodule "lib/symmetry"]
+	path = lib/symmetry
+	url = https://github.com/jamesvsnowden/bl_symmetry.git
