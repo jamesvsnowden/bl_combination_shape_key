@@ -1,3 +1,10 @@
+---
+title: Installation
+description: 'How to install combination shape key addon for Blender'
+category: Getting Started
+position: 2
+fullscreen: false
+---
 # Installation
 
 Open Blender's Preferences from the Edit menu and select the Add-ons pane.

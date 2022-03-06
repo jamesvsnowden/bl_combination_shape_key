@@ -1,3 +1,11 @@
+---
+title: Introduction
+description: 'Overview of combination shape key addon for Blender'
+category: Getting Started
+position: 1
+fullscreen: false
+---
+
 # Combination Shape Keys
 
 A combination shape key is a shape key that is driven by one or more other shape keys. They enable

@@ -38,6 +38,7 @@ import bpy
 import rna_prop_ui
 from .lib import curve_mapping
 from .lib.driver_utils import driver_ensure, driver_find, driver_remove
+from .lib.symmetry import symmetrical_target
 
 curve_mapping.BLCMAP_OT_curve_copy.bl_idname = "csk.curve_copy"
 curve_mapping.BLCMAP_OT_curve_paste.bl_idname = "csk.curve_paste"
@@ -60,6 +61,7 @@ class CombinationShapeKeyTargetFalloff(curve_mapping.BCLMAP_CurveManager, bpy.ty
     def update(self, context: typing.Optional[bpy.types.Context] = None) -> None:
         super().update(context)
         self.id_data.path_resolve(self.path_from_id().rpartition(".")[0]).fcurve_update()
+
 
 class CombinationShapeKey(bpy.types.PropertyGroup):
     """Manages and stores settings for a combination shape key"""
@@ -202,6 +204,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
     def weight_property_path(self) -> str:
         return f'["{self.weight_property_name}"]'
 
+
 class CombinationShapeKeyTarget(bpy.types.PropertyGroup):
     """Shape key target"""
 
@@ -219,6 +222,7 @@ class CombinationShapeKeyTarget(bpy.types.PropertyGroup):
 
 COMPAT_ENGINES = {'BLENDER_RENDER', 'BLENDER_EEVEE', 'BLENDER_WORKBENCH'}
 COMPAT_OBJECTS = {'MESH', 'LATTICE', 'CURVE'}
+
 
 class CombinationShapeKeyCreate:
 
@@ -301,6 +305,7 @@ class CombinationShapeKeyCreate:
 
         manager.update()
 
+
 class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
     bl_idname = 'combination_shape_key.new'
     bl_label = "New Combination Shape Key"
@@ -342,6 +347,7 @@ class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
         object.active_shape_key_index = target.id_data.key_blocks.find(target.name)
         return {'FINISHED'}
 
+
 class CombinationShapeKeyDriversSelect(CombinationShapeKeyCreate, bpy.types.Operator):
     bl_idname = 'combination_shape_key.drivers_select'
     bl_label = "Select Combination Shape Key Drivers"
@@ -371,6 +377,83 @@ class CombinationShapeKeyDriversSelect(CombinationShapeKeyCreate, bpy.types.Oper
         self.execute_internal(context.object.active_shape_key)
         return {'FINISHED'}
 
+
+class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
+
+    bl_idname = "combination_shape_key.duplicate_mirror"
+    bl_label = "Duplicate & Mirror Combination Shape Key"
+    bl_description = "Duplicate and mirror combination shape key and drivers"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        if context.engine in COMPAT_ENGINES:
+            object = context.object
+            if object is not None and object.type in COMPAT_OBJECTS:
+                shape = object.active_shape_key
+                if shape is not None:
+                    key = shape.id_data
+                    if key.is_property_set("combination_shape_keys"):
+                        name = shape.name
+                        if (name in key.combination_shape_keys
+                            and driver_find(key, f'key_blocks["{shape.name}"].value') is not None
+                            ):
+                            name = symmetrical_target(name)
+                            return bool(name) and name not in key.combination_shape_keys
+        return False
+
+    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+        object = context.object
+        orig = object.active_shape_key
+        copy = object.shape_key_add(name=symmetrical_target(orig.name), from_mix=False)
+
+        for src, tgt in zip(orig.data.vertices, copy.data.vertices):
+            src_co = src.co
+            tgt_co = tgt.co
+            src_co.x = tgt_co.x * -1.0
+            src_co.y = tgt_co.y
+            src_co.z = tgt_co.z
+
+        key = orig.id_data
+
+        manager = key.combination_shape_keys.add()
+        manager["name"] = copy.name
+        manager["identifier"] = f'combination_{uuid.uuid4().hex}'
+        manager.falloff.__init__()
+
+        rna_prop_ui.rna_idprop_ui_create(key.user,
+                                         manager.weight_property_name,
+                                         default=1.0,
+                                         min=0.0,
+                                         max=1.0,
+                                         soft_min=0.0,
+                                         soft_max=1.0,
+                                         description="Combination shape key driver weight")
+
+        o_fcurve = driver_find(key, f'key_blocks["{orig.name}"].value') is not None
+        o_driver = o_fcurve.driver
+
+        m_fcurve = driver_ensure(key, f'key_blocks["{copy.name}"].value')
+        m_driver = m_fcurve.driver
+
+        for o_var in o_driver.variables:
+            m_var = m_driver.variables.new()
+            m_var = o_var.name
+            m_var.type = o_var.type
+
+            for o_tgt, m_tgt in zip(o_var.targets, m_var.targets):
+                m_tgt.id_type = o_tgt.id_type
+                m_tgt.id = o_tgt.id
+                o_name = o_tgt.data_path[12:-8]
+                m_name = symmetrical_target(o_name)
+                m_tgt.data_path = f'key_blocks["{m_name if m_name in key.key_blocks else o_name}"].value'
+
+        m_driver.type = o_driver.type
+        m_driver.expression = o_driver.expression
+
+        return {'FINISHED'}
+
+
 class CombinationShapeKeyDriversRemove(bpy.types.Operator):
     bl_idname = 'combination_shape_key.drivers_remove'
     bl_label = "Remove Combination Shape Key Drivers"
@@ -396,6 +479,7 @@ class CombinationShapeKeyDriversRemove(bpy.types.Operator):
         collection = key.combination_shape_keys
         collection.remove(collection.find(shape.name))
         return {'FINISHED'}
+
 
 class CombinationShapeKeyDriversSolo(bpy.types.Operator):
     bl_idname = 'combination_shape_key.drivers_solo'
@@ -434,6 +518,7 @@ class CombinationShapeKeyDriversSolo(bpy.types.Operator):
                 item.mute = True
 
         return {'FINISHED'}
+
 
 class CombinationShapeKeyDriverAdd(bpy.types.Operator):
     bl_idname = 'combination_shape_key.driver_add'
@@ -511,6 +596,7 @@ class CombinationShapeKeyDriverAdd(bpy.types.Operator):
 
         return {'FINISHED'}
 
+
 class CombinationShapeKeyDriverRemove(bpy.types.Operator):
     bl_idname = 'combination_shape_key.driver_remove'
     bl_label = "Remove Driver"
@@ -539,6 +625,7 @@ class CombinationShapeKeyDriverRemove(bpy.types.Operator):
         variables.remove(variables[data.active_driver_index])
         data.active_driver_index = min(data.active_driver_index, len(variables)-1)
         return {'FINISHED'}
+
 
 class CombinationShapeKeyDriverMoveUp(bpy.types.Operator):
     bl_idname = 'combination_shape_key.driver_move_up'
@@ -574,6 +661,7 @@ class CombinationShapeKeyDriverMoveUp(bpy.types.Operator):
         variables[index-1].targets[0].data_path = cache
         data.active_driver_index -= 1
         return {'FINISHED'}
+
 
 class CombinationShapeKeyDriverMoveDown(bpy.types.Operator):
     bl_idname = 'combination_shape_key.driver_move_down'
@@ -791,6 +879,9 @@ def draw_menu_items(menu: bpy.types.Menu, context: bpy.types.Context) -> None:
                                     icon='ANIM',
                                     text="Select Combination Shape Key Drivers")
                 elif data is not None:
+                    layout.operator(CombinationShapeKeyDuplicateMirror.bl_idname,
+                                    icon='MOD_MIRROR',
+                                    text="Duplicate & Mirror Combination Shape Key")
                     layout.operator(CombinationShapeKeyDriversRemove.bl_idname,
                                     icon='REMOVE',
                                     text="Remove Combination Shape Key Drivers")
@@ -812,6 +903,7 @@ CLASSES = [
     CombinationShapeKeyTarget,
     CombinationShapeKeyNew,
     CombinationShapeKeyDriversSelect,
+    CombinationShapeKeyDuplicateMirror,
     CombinationShapeKeyDriversRemove,
     CombinationShapeKeyDriversSolo,
     CombinationShapeKeyDriverAdd,
