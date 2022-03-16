@@ -5,14 +5,18 @@ category: User Guide
 position: 5
 fullscreen: false
 ---
-# Combination Shape Key Drivers
-
-## The Combination Shape Key Driver List
+## Drivers
 
 At the top of the **Combination Shape Key Drivers** panel is the list of the shape keys that are
 driving the combination shape key. You can add or remove *drivers* at any time and organize the
 list as you see fit. To order of the shape keys in the list does not have an effect on the
 functionality of the combination shape key.
+
+### Add
+
+### Remove
+
+### Move
 
 ## Mode
 
@@ -30,16 +34,25 @@ combination shape key. The available options are:
 <dd>The average (mean) of the shape key values is used to produce the combination shape key value</dd>
 </dl>
 
+## Solo
+
+## Influence
+
+Below the **Mode** setting is the **Influence** slider. As the name suggests, the **Influence**
+controls the amount of effect the combination shape key has. In addition to its obvious use this
+property can be animated or driven, which essentially means the combination shape key itself can
+be animated.
+
 ## Enable Driver
 
-Below the **Mode** setting is a checkbox marked **Enable Driver**. By default it is checked and the
+Below the **Influence** slider is a checkbox marked **Enable Driver**. By default it is checked and the
 combination shape key driver is active. Unchecking **Enable Driver** will mute the driver being used
 to control the combination shape key, doing so means that you can shift the combination shape key's
 value in the user interface which can be useful when previewing it's effect. Don't forget to re-enable
 it once you're done!
 
-!!!Note
-Blender will show an unobtrusive warning about editing driven values. You can safely ignore it.
+<alert>Even with the driver disabled, Blender will show an unobtrusive warning about editing driven
+values. You can safely ignore it.</alert>
 
 ## Goal
 

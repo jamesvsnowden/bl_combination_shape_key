@@ -1,13 +1,11 @@
 ---
-title: Introduction
+title: Combination Shape Keys
+menuTitle: Introduction
 description: 'Overview of combination shape key addon for Blender'
 category: Getting Started
 position: 1
 fullscreen: false
 ---
-
-# Combination Shape Keys
-
 A combination shape key is a shape key that is driven by one or more other shape keys. They enable
 you to have more precise control over the way in which shape keys deform the model and are
 particularly useful in facial animation.
@@ -15,19 +13,17 @@ particularly useful in facial animation.
 For example, let's say you've set up some shape keys for your character's facial expressions. One
 of these shape keys is *satisfaction*, and another *acceptance*.
 
-![Satisfaction Expression Shape Key](media/satisfaction.gif)
-
-![Acceptance Expression Shape Key](media/acceptance.gif)
+![Satisfaction Expression Shape Key](/ex_01.png)
 
 You're happy with these shape keys in isolation, but when they are used together the combined
 deformation is not so great. In this case the effect is a little too much.
 
-![Satisfaction and Acceptance Expression Shape Keys](media/satisfaction_acceptance.gif)
+![Satisfaction Expression Shape Key](/ex_02.png)
 
 In this case you can create a new combination shape key that corrects the expression when
 *satisfaction* and *acceptance* shape keys are used together.
 
-![Satisfaction and Acceptance Expression Combination Shape Key](media/satisfaction_acceptance_combination.gif)
+![Satisfaction Expression Shape Key](/ex_03.gif)
 
 Combination shape keys have been available in other software packages for some time and are
 essential to many workflows. This addon brings simple but highly configurable combination shape

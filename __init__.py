@@ -35,7 +35,7 @@ import string
 import typing
 import uuid
 import bpy
-import rna_prop_ui
+from rna_prop_ui import rna_idprop_ui_create
 from .lib import curve_mapping
 from .lib.driver_utils import driver_ensure, driver_find, driver_remove
 from .lib.symmetry import symmetrical_target
@@ -43,6 +43,13 @@ from .lib.symmetry import symmetrical_target
 curve_mapping.BLCMAP_OT_curve_copy.bl_idname = "csk.curve_copy"
 curve_mapping.BLCMAP_OT_curve_paste.bl_idname = "csk.curve_paste"
 curve_mapping.BLCMAP_OT_curve_edit.bl_idname = "csk.curve_edit"
+
+def idprop_ensure(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
+    if owner.get(name) is None:
+        idprop_create(owner, name)
+
+def idprop_create(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
+    rna_idprop_ui_create(owner, name, default=1.0, min=0.0, max=1.0, soft_min=0.0, soft_max=1.0)
 
 def idprop_remove(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
     try:
@@ -82,29 +89,42 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
     def driver_update(self, context: typing.Optional[bpy.types.Context]=None) -> None:
         """Updates the combination shape key driver"""
         if self.is_valid:
-            fcurve = driver_ensure(self.id_data, self.data_path)
-            driver = fcurve.driver
-            driver.type = 'SCRIPTED'
-            fcurve.mute = self.mute
+            fc = driver_ensure(self.id_data, self.data_path)
+            dr = fc.driver
+            dr.type = 'SCRIPTED'
+            fc.mute = self.mute
 
-            keys = tuple(var.name for var in driver.variables[2:])
+            keys = tuple(var.name for var in dr.variables[3:])
 
             if len(keys) == 0:
-                driver.expression = "0.0"
+                dr.expression = "0.0"
             else:
                 mode = self.mode
 
+                w = dr.variables[1]
+                i = dr.variables[2]
+
                 if mode == 'MULTIPLY':
-                    driver.expression = f'{driver.variables[1].name}*{"*".join(keys)}'
+                    dr.expression = f'{w.name}*{i.name}*{"*".join(keys)}'
                 elif mode == 'MIN':
-                    driver.expression = f'{driver.variables[1].name}*min({",".join(keys)})'
+                    dr.expression = f'{w.name}*{i.name}*min({",".join(keys)})'
                 elif mode == 'MAX':
-                    driver.expression = f'{driver.variables[1].name}*max({",".join(keys)})'
+                    dr.expression = f'{w.name}*{i.name}*max({",".join(keys)})'
                 else:
-                    driver.expression = f'{driver.variables[1].name}*(({"+".join(keys)})/{str(float(len(keys)))})'
+                    dr.expression = f'{w.name}*{i.name}*(({"+".join(keys)})/{str(float(len(keys)))})'
+
+    def id_properties_create(self) -> None:
+        """
+        Ensures required id-properties exist
+        """
+        idprop_ensure(self.id_data.user, self.weight_property_name)
+        idprop_ensure(self.id_data.user, self.influence_property_name)
 
     def update(self, context: typing.Optional[bpy.types.Context]=None) -> None:
-        """Updates the fcurve and driver for the combination shape key"""
+        """
+        Ensures id-properties exist and updates the fcurve and driver for the combination shape key
+        """
+        self.id_properties_create()
         self.fcurve_update()
         self.driver_update()
 
@@ -143,6 +163,14 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         get=lambda self: self.get("identifier", ""),
         options={'HIDDEN'}
         )
+
+    @property
+    def influence_property_name(self) -> str:
+        return f'influence_{self.identifier}'
+
+    @property
+    def influence_property_path(self) -> str:
+        return f'["{self.influence_property_name}"]'
 
     @property
     def is_valid(self) -> bool:
@@ -257,51 +285,53 @@ class CombinationShapeKeyCreate:
         manager["identifier"] = f'combination_{uuid.uuid4().hex}'
         manager.falloff.__init__()
 
-        rna_prop_ui.rna_idprop_ui_create(key.user,
-                                         manager.weight_property_name,
-                                         default=1.0,
-                                         min=0.0,
-                                         max=1.0,
-                                         soft_min=0.0,
-                                         soft_max=1.0,
-                                         description="Combination shape key driver weight")
+        idprop_create(key.user, manager.weight_property_name)
+        idprop_create(key.user, manager.influence_property_name)
 
         fcurve = driver_ensure(key, f'key_blocks["{target.name}"].value')
         driver = fcurve.driver
 
-        variable = driver.variables.new()
-        variable.type = 'SINGLE_PROP'
-        variable.name = manager["identifier"]
-        variable.targets[0].id_type = 'KEY'
-        variable.targets[0].id = key
-        variable.targets[0].data_path = 'reference_key.value'
+        v = driver.variables.new()
+        v.type = 'SINGLE_PROP'
+        v.name = manager["identifier"]
+        v.targets[0].id_type = 'KEY'
+        v.targets[0].id = key
+        v.targets[0].data_path = 'reference_key.value'
 
-        variable = driver.variables.new()
-        variable.type = 'SINGLE_PROP'
-        variable.name = "w"
+        w = driver.variables.new()
+        i = driver.variables.new()
+        w.type = 'SINGLE_PROP'
+        i.type = 'SINGLE_PROP'
+        w.name = "w_"
+        i.name = "i_"
 
         id = key.user
         if isinstance(id, bpy.types.Lattice):
-            variable.targets[0].id_type = 'LATTICE'
+            w.targets[0].id_type = 'LATTICE'
+            i.targets[0].id_type = 'LATTICE'
         elif isinstance(id, bpy.types.Curve):
-            variable.targets[0].id_type = 'CURVE'
+            w.targets[0].id_type = 'CURVE'
+            i.targets[0].id_type = 'CURVE'
         else:
-            variable.targets[0].id_type = 'MESH'
+            w.targets[0].id_type = 'MESH'
+            i.targets[0].id_type = 'MESH'
 
-        variable.targets[0].id = id
-        variable.targets[0].data_path = manager.weight_property_path
+        w.targets[0].id = id
+        i.targets[0].id = id
+        w.targets[0].data_path = manager.weight_property_path
+        i.targets[0].data_path = manager.influence_property_path
 
         items = tuple(filter(operator.attrgetter("is_selected"), self.shapes))
         chars = string.ascii_letters
         names = itertools.islice(itertools.product(chars, repeat=len(items)//len(chars)+1), len(items))
 
         for item, name in zip(items, names):
-            variable = driver.variables.new()
-            variable.type = 'SINGLE_PROP'
-            variable.name = "".join(name)
-            variable.targets[0].id_type = 'KEY'
-            variable.targets[0].id = key
-            variable.targets[0].data_path = f'key_blocks["{item.name}"].value'
+            v = driver.variables.new()
+            v.type = 'SINGLE_PROP'
+            v.name = "".join(name)
+            v.targets[0].id_type = 'KEY'
+            v.targets[0].id = key
+            v.targets[0].data_path = f'key_blocks["{item.name}"].value'
 
         manager.update()
 
@@ -330,15 +360,15 @@ class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
 
     def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> typing.Set[str]:
         self.invoke_internal(context.object.data.shape_keys)
-        return context.window_manager.invoke_props_dialog(self, width=300)
+        return context.window_manager.invoke_props_dialog(self, width=480)
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         layout.separator()
-        layout.prop(self, "name")
-        layout.separator()
-        layout.label(text="Drivers")
         layout.template_list(CombinationShapeKeyTargetList.bl_idname, "", self, "shapes", self, "active_index")
+        layout_split(layout, "Name", factor=0.25, decorate=False).prop(self, "name", text="")
+        layout.separator()
+
 
     def execute(self, context: bpy.types.Context) -> typing.Set[str]:
         object = context.object
@@ -421,14 +451,8 @@ class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
         manager["identifier"] = f'combination_{uuid.uuid4().hex}'
         manager.falloff.__init__()
 
-        rna_prop_ui.rna_idprop_ui_create(key.user,
-                                         manager.weight_property_name,
-                                         default=1.0,
-                                         min=0.0,
-                                         max=1.0,
-                                         soft_min=0.0,
-                                         soft_max=1.0,
-                                         description="Combination shape key driver weight")
+        idprop_create(key.user, manager.weight_property_name)
+        idprop_create(key.user, manager.influence_property_name)
 
         o_fcurve = driver_find(key, f'key_blocks["{orig.name}"].value') is not None
         o_driver = o_fcurve.driver
@@ -761,7 +785,7 @@ class CombinationShapeKeyDriverList(bpy.types.UIList):
         # to provide easier lookups on driver variables.
         variables = getattr(data, propname)
         used_item = self.bitflag_filter_item
-        res_flags = [used_item if i > 1 else ~used_item for i in range(len(variables))]
+        res_flags = [used_item if i > 2 else ~used_item for i in range(len(variables))]
         res_order = list(range(len(variables)))
         return res_flags, res_order
 
@@ -828,21 +852,25 @@ class CombinationShapeKeySettings(bpy.types.Panel):
             col.operator(CombinationShapeKeyDriverAdd.bl_idname, icon='ADD', text="")
             col.operator(CombinationShapeKeyDriverRemove.bl_idname, icon='REMOVE', text="")
             col.separator()
-            col.operator(CombinationShapeKeyDriversSolo.bl_idname, icon='SOLO_ON', text="")
-            col.separator()
             col.operator(CombinationShapeKeyDriverMoveUp.bl_idname, icon='TRIA_UP', text="")
             col.operator(CombinationShapeKeyDriverMoveDown.bl_idname, icon='TRIA_DOWN', text="")
         else:
             col = layout_split(layout, " ")
             col.operator(CombinationShapeKeyDriverAdd.bl_idname, icon='ADD', text="Add")
 
-        col = layout_split(layout, "Mode")
-        col.prop(target, "mode", text="")
+        a, b, c = layout_split(layout, decorate_fill=False)
+        a.label(text="Mode")
+        a.label(text="Influence")
+        b.prop(target, "mode", text="")
+        b.prop(target.id_data.user, target.influence_property_path, text="", slider=True)
+        c.operator(CombinationShapeKeyDriversSolo.bl_idname, icon='SOLO_OFF', text="")
 
-        row = col.row()
+        row = b.row()
         row.alignment = 'RIGHT'
         row.label(text="Enable Driver")
         row.prop(target, "mute", text="", invert_checkbox=True)
+
+        layout.separator()
 
         a, b = layout_split(layout)
         a.label(text="Goal")
@@ -854,6 +882,8 @@ class CombinationShapeKeySettings(bpy.types.Panel):
         row.alignment = 'RIGHT'
         row.label(text="Clamp Value")
         row.prop(target, "clamp", text="")
+
+        layout.separator()
 
         col = layout_split(layout, "Easing", decorate=False)
         curve_mapping.draw_curve_manager_ui(col, target.falloff)
@@ -898,6 +928,7 @@ CLASSES = [
     curve_mapping.BLCMAP_OT_curve_copy,
     curve_mapping.BLCMAP_OT_curve_paste,
     curve_mapping.BLCMAP_OT_curve_edit,
+    curve_mapping.BLCMAP_OT_node_ensure,
     CombinationShapeKeyTargetFalloff,
     CombinationShapeKey,
     CombinationShapeKeyTarget,
@@ -932,13 +963,36 @@ def shape_key_name_callback():
                             if manager:
                                 manager["name"] = shape.name
 
+def setup_combination_shape_keys():
+    keys = bpy.data.shape_keys
+    if keys:
+        for key in keys:
+            if key.is_property_set("combination_shape_keys"):
+                for item in key.combination_shape_keys:
+                    curve = item.falloff
+                    curve_mapping.nodetree_node_ensure(curve.node_identifier, curve)
+                    idprop_ensure(key.user, item.weight_property_name)
+                    idprop_ensure(key.user, item.influence_property_name)
+
+def try_setup_combination_shape_keys():
+    try:
+        setup_combination_shape_keys()
+    except AttributeError: pass
+
 @bpy.app.handlers.persistent
-def enable_message_broker(_=None) -> None:
+def load_post_handler(_=None) -> None:
     bpy.msgbus.clear_by_owner(MESSAGE_BROKER)
     bpy.msgbus.subscribe_rna(key=(bpy.types.ShapeKey, "name"),
                              owner=MESSAGE_BROKER,
                              args=tuple(),
                              notify=shape_key_name_callback)
+
+    # On initial load accessing bpy.data.shape_keys will raise AttributeError.
+    # Retry after 5 seconds.
+    try:
+        setup_combination_shape_keys()
+    except AttributeError:
+        bpy.app.timers.register(try_setup_combination_shape_keys, first_interval=5)
 
 def register():
     for cls in CLASSES:
@@ -951,15 +1005,15 @@ def register():
         )
 
     bpy.types.MESH_MT_shape_key_context_menu.append(draw_menu_items)
-    bpy.app.handlers.load_post.append(enable_message_broker)
-    enable_message_broker() # Ensure messages are subscribed to on first install
+    bpy.app.handlers.load_post.append(load_post_handler)
+    load_post_handler() # Ensure messages are subscribed to on first install
 
 def unregister():
     import sys
     import operator
 
     bpy.msgbus.clear_by_owner(MESSAGE_BROKER)
-    bpy.app.handlers.load_post.remove(enable_message_broker)
+    bpy.app.handlers.load_post.remove(load_post_handler)
     bpy.types.MESH_MT_shape_key_context_menu.remove(draw_menu_items)
 
     try:
