@@ -3,7 +3,7 @@ title: Installation
 description: 'How to install combination shape key addon for Blender'
 category: Getting Started
 position: 2
-fullscreen: false
+fullscreen: true
 ---
 ![edit_prefs](/install.png)
 

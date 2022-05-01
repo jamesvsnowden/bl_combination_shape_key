@@ -21,7 +21,7 @@ bl_info = {
     "description": "Combination shape keys.",
     "author": "James Snowden",
     "version": (1, 0, 0),
-    "blender": (2, 90, 0),
+    "blender": (3, 0, 0),
     "location": "View3D",
     "warning": "",
     "doc_url": "https://combination_shape_keys.github.io",
@@ -29,29 +29,43 @@ bl_info = {
     "category": "Animation",
 }
 
-import itertools
-import operator
-import string
-import typing
-import uuid
+from typing import List, Optional, Union, Set, Sequence, Tuple, TYPE_CHECKING
+from itertools import islice, product
+from operator import attrgetter, itemgetter
+from string import ascii_letters
+from uuid import uuid4
 import bpy
+from bpy.types import Curve, Key, Lattice, Operator, Panel, PropertyGroup, ShapeKey, UIList
+from bpy.props import (BoolProperty,
+                       CollectionProperty,
+                       EnumProperty,
+                       FloatProperty,
+                       IntProperty,
+                       PointerProperty,
+                       StringProperty)
 from rna_prop_ui import rna_idprop_ui_create
 from .lib import curve_mapping
 from .lib.driver_utils import driver_ensure, driver_find, driver_remove
 from .lib.symmetry import symmetrical_target
+if TYPE_CHECKING:
+    from bpy.types import Bone, Context, Driver, DriverVariable, Event, ID, Menu, PoseBone, UILayout
 
 curve_mapping.BLCMAP_OT_curve_copy.bl_idname = "csk.curve_copy"
 curve_mapping.BLCMAP_OT_curve_paste.bl_idname = "csk.curve_paste"
-curve_mapping.BLCMAP_OT_curve_edit.bl_idname = "csk.curve_edit"
+curve_mapping.BLCMAP_OT_handle_type_set.bl_idname = "csk.curve_point_handle_type_set"
+curve_mapping.BLCMAP_OT_node_ensure.bl_idname = "csk.curve_node_ensure"
 
-def idprop_ensure(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
+
+def idprop_ensure(owner: Union['ID', 'PoseBone', 'Bone'], name: str) -> None:
     if owner.get(name) is None:
         idprop_create(owner, name)
 
-def idprop_create(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
+
+def idprop_create(owner: Union['ID', 'PoseBone', 'Bone'], name: str) -> None:
     rna_idprop_ui_create(owner, name, default=1.0, min=0.0, max=1.0, soft_min=0.0, soft_max=1.0)
 
-def idprop_remove(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.types.Bone], name: str) -> None:
+
+def idprop_remove(owner: Union['ID', 'PoseBone', 'Bone'], name: str) -> None:
     try:
         del owner[name]
     except KeyError: pass
@@ -63,17 +77,17 @@ def idprop_remove(owner: typing.Union[bpy.types.ID, bpy.types.PoseBone, bpy.type
 #region Properties
 ###################################################################################################
 
-class CombinationShapeKeyTargetFalloff(curve_mapping.BCLMAP_CurveManager, bpy.types.PropertyGroup):
+class CombinationShapeKeyTargetFalloff(curve_mapping.BCLMAP_CurveManager, PropertyGroup):
 
-    def update(self, context: typing.Optional[bpy.types.Context] = None) -> None:
-        super().update(context)
+    def update(self) -> None:
+        super().update()
         self.id_data.path_resolve(self.path_from_id().rpartition(".")[0]).fcurve_update()
 
 
-class CombinationShapeKey(bpy.types.PropertyGroup):
+class CombinationShapeKey(PropertyGroup):
     """Manages and stores settings for a combination shape key"""
 
-    def fcurve_update(self, context: typing.Optional[bpy.types.Context]=None) -> None:
+    def fcurve_update(self, _: Optional['Context']=None) -> None:
         """Updates the combination shape key fcurve keyframes"""
         if self.is_valid:
             fcurve = driver_ensure(self.id_data, self.data_path)
@@ -86,7 +100,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
 
             curve_mapping.keyframe_points_assign(fcurve.keyframe_points, bezier)
 
-    def driver_update(self, context: typing.Optional[bpy.types.Context]=None) -> None:
+    def driver_update(self, _: Optional['Context']=None) -> None:
         """Updates the combination shape key driver"""
         if self.is_valid:
             fc = driver_ensure(self.id_data, self.data_path)
@@ -120,7 +134,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         idprop_ensure(self.id_data.user, self.weight_property_name)
         idprop_ensure(self.id_data.user, self.influence_property_name)
 
-    def update(self, context: typing.Optional[bpy.types.Context]=None) -> None:
+    def update(self, context: Optional['Context']=None) -> None:
         """
         Ensures id-properties exist and updates the fcurve and driver for the combination shape key
         """
@@ -128,7 +142,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         self.fcurve_update()
         self.driver_update()
 
-    active_driver_index: bpy.props.IntProperty(
+    active_driver_index: IntProperty(
         name="Combination Shape Key Driver",
         description="The index of the driver currently selected in the UI",
         min=2,
@@ -136,7 +150,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         options={'HIDDEN'}
         )
 
-    clamp: bpy.props.BoolProperty(
+    clamp: BoolProperty(
         name="Clamp",
         description="Limits the driven target value to be between 0 and the defined target value",
         default=True,
@@ -150,14 +164,14 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         name = self.name
         return f'key_blocks["{self.name}"].value' if name else ""
 
-    falloff: bpy.props.PointerProperty(
+    falloff: PointerProperty(
         name="Falloff",
         description="Falloff curve settings",
         type=CombinationShapeKeyTargetFalloff,
         options=set()
         )
 
-    identifier: bpy.props.StringProperty(
+    identifier: StringProperty(
         name="Shape",
         description="Unique identifier used to hold a reference to the target shape key.",
         get=lambda self: self.get("identifier", ""),
@@ -177,7 +191,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         """Whether or not a target shape key exists for the combination shape key"""
         return self.name in self.id_data.key_blocks
 
-    mode: bpy.props.EnumProperty(
+    mode: EnumProperty(
         name="Mode",
         description="The method to use when calculating the combination shape key's value",
         items=[
@@ -191,7 +205,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         update=driver_update
         )
 
-    mute: bpy.props.BoolProperty(
+    mute: BoolProperty(
         name="Mute",
         description=("Whether or not the combination shape key's driver is enabled. Disabling "
                      "the driver allows (temporary) editing of the shape key's value in the UI"),
@@ -200,7 +214,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         update=driver_update
         )
 
-    radius: bpy.props.FloatProperty(
+    radius: FloatProperty(
         name="Radius",
         description=("The distance from the target shape key's value at which to begin "
                      "interpolating the shape key's value"),
@@ -212,7 +226,7 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         update=fcurve_update
         )
 
-    target_value: bpy.props.FloatProperty(
+    target_value: FloatProperty(
         name="Goal",
         description=("The target value for the combination shape key when all driver shape keys "
                      "are fully activated"),
@@ -233,10 +247,10 @@ class CombinationShapeKey(bpy.types.PropertyGroup):
         return f'["{self.weight_property_name}"]'
 
 
-class CombinationShapeKeyTarget(bpy.types.PropertyGroup):
+class CombinationShapeKeyTarget(PropertyGroup):
     """Shape key target"""
 
-    is_selected: bpy.props.BoolProperty(
+    is_selected: BoolProperty(
         name="Selected",
         description="Select the shape key for use",
         default=False,
@@ -254,22 +268,20 @@ COMPAT_OBJECTS = {'MESH', 'LATTICE', 'CURVE'}
 
 class CombinationShapeKeyCreate:
 
-    active_index: bpy.props.IntProperty(
+    active_index: IntProperty(
         name="Driver",
         min=0,
         default=0,
         options={'HIDDEN'}
         )
 
-    shapes: bpy.props.CollectionProperty(
+    shapes: CollectionProperty(
         name="Shapes",
         type=CombinationShapeKeyTarget,
         options=set()
         )
 
-    def invoke_internal(self,
-                      key: bpy.types.Key,
-                      exclude: typing.Optional[typing.Sequence[bpy.types.ShapeKey]]=None) -> None:
+    def invoke_internal(self, key: Key, exclude: Optional[Sequence[ShapeKey]]=None) -> None:
         shapes = self.shapes
         shapes.clear()
         for shape in key.key_blocks[1:]:
@@ -277,12 +289,12 @@ class CombinationShapeKeyCreate:
                 shapes.add()["name"] = shape.name
         self.active_index = 0
 
-    def execute_internal(self, target: bpy.types.ShapeKey):
+    def execute_internal(self, target: ShapeKey):
         key = target.id_data
 
         manager = key.combination_shape_keys.add()
         manager["name"] = target.name
-        manager["identifier"] = f'combination_{uuid.uuid4().hex}'
+        manager["identifier"] = f'combination_{uuid4().hex}'
         manager.falloff.__init__()
 
         idprop_create(key.user, manager.weight_property_name)
@@ -306,10 +318,10 @@ class CombinationShapeKeyCreate:
         i.name = "i_"
 
         id = key.user
-        if isinstance(id, bpy.types.Lattice):
+        if isinstance(id, Lattice):
             w.targets[0].id_type = 'LATTICE'
             i.targets[0].id_type = 'LATTICE'
-        elif isinstance(id, bpy.types.Curve):
+        elif isinstance(id, Curve):
             w.targets[0].id_type = 'CURVE'
             i.targets[0].id_type = 'CURVE'
         else:
@@ -321,9 +333,9 @@ class CombinationShapeKeyCreate:
         w.targets[0].data_path = manager.weight_property_path
         i.targets[0].data_path = manager.influence_property_path
 
-        items = tuple(filter(operator.attrgetter("is_selected"), self.shapes))
-        chars = string.ascii_letters
-        names = itertools.islice(itertools.product(chars, repeat=len(items)//len(chars)+1), len(items))
+        items = tuple(filter(attrgetter("is_selected"), self.shapes))
+        chars = ascii_letters
+        names = islice(product(chars, repeat=len(items)//len(chars)+1), len(items))
 
         for item, name in zip(items, names):
             v = driver.variables.new()
@@ -336,13 +348,13 @@ class CombinationShapeKeyCreate:
         manager.update()
 
 
-class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
+class CombinationShapeKeyNew(CombinationShapeKeyCreate, Operator):
     bl_idname = 'combination_shape_key.new'
     bl_label = "New Combination Shape Key"
     bl_description = "Create a new combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
-    name: bpy.props.StringProperty(
+    name: StringProperty(
         name="Name",
         description="Unique name of the combination shape key",
         default="Key",
@@ -350,7 +362,7 @@ class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
         )
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -358,19 +370,18 @@ class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
                 return key is not None and key.use_relative
         return False
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> typing.Set[str]:
+    def invoke(self, context: 'Context', event: 'Event') -> Set[str]:
         self.invoke_internal(context.object.data.shape_keys)
         return context.window_manager.invoke_props_dialog(self, width=480)
 
-    def draw(self, context: bpy.types.Context) -> None:
+    def draw(self, context: 'Context') -> None:
         layout = self.layout
         layout.separator()
         layout.template_list(CombinationShapeKeyTargetList.bl_idname, "", self, "shapes", self, "active_index")
         layout_split(layout, "Name", factor=0.25, decorate=False).prop(self, "name", text="")
         layout.separator()
 
-
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         object = context.object
         target = object.shape_key_add(name=self.name, from_mix=False)
         self.execute_internal(target)
@@ -378,14 +389,14 @@ class CombinationShapeKeyNew(CombinationShapeKeyCreate, bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriversSelect(CombinationShapeKeyCreate, bpy.types.Operator):
+class CombinationShapeKeyDriversSelect(CombinationShapeKeyCreate, Operator):
     bl_idname = 'combination_shape_key.drivers_select'
     bl_label = "Select Combination Shape Key Drivers"
     bl_description = "Select drivers for a combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -396,19 +407,19 @@ class CombinationShapeKeyDriversSelect(CombinationShapeKeyCreate, bpy.types.Oper
                             or shape.name not in key.combination_shape_keys)
         return False
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> typing.Set[str]:
+    def invoke(self, context: 'Context', event: 'Event') -> Set[str]:
         self.invoke_internal(context.object.data.shape_keys, exclude=(context.object.active_shape_key,))
         return context.window_manager.invoke_props_dialog(self, width=300)
 
-    def draw(self, context: bpy.types.Context) -> None:
+    def draw(self, context: 'Context') -> None:
         self.layout.template_list(CombinationShapeKeyTargetList.bl_idname, "", self, "shapes", self, "active_index")
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         self.execute_internal(context.object.active_shape_key)
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
+class CombinationShapeKeyDuplicateMirror(Operator):
 
     bl_idname = "combination_shape_key.duplicate_mirror"
     bl_label = "Duplicate & Mirror Combination Shape Key"
@@ -416,7 +427,7 @@ class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -432,7 +443,7 @@ class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
                             return bool(name) and name not in key.combination_shape_keys
         return False
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         object = context.object
         orig = object.active_shape_key
         copy = object.shape_key_add(name=symmetrical_target(orig.name), from_mix=False)
@@ -448,7 +459,7 @@ class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
 
         manager = key.combination_shape_keys.add()
         manager["name"] = copy.name
-        manager["identifier"] = f'combination_{uuid.uuid4().hex}'
+        manager["identifier"] = f'combination_{uuid4().hex}'
         manager.falloff.__init__()
 
         idprop_create(key.user, manager.weight_property_name)
@@ -478,14 +489,14 @@ class CombinationShapeKeyDuplicateMirror(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriversRemove(bpy.types.Operator):
+class CombinationShapeKeyDriversRemove(Operator):
     bl_idname = 'combination_shape_key.drivers_remove'
     bl_label = "Remove Combination Shape Key Drivers"
     bl_description = "Remove drivers for the combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -496,7 +507,7 @@ class CombinationShapeKeyDriversRemove(bpy.types.Operator):
                             and shape.name in key.combination_shape_keys)
         return False
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         driver_remove(key, f'key_blocks["{shape.name}"].value')
@@ -505,14 +516,14 @@ class CombinationShapeKeyDriversRemove(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriversSolo(bpy.types.Operator):
+class CombinationShapeKeyDriversSolo(Operator):
     bl_idname = 'combination_shape_key.drivers_solo'
     bl_label = "Solo Combination Shape Key Drivers"
     bl_description = "Unmutes shape key drivers, sets their values to 1.0 and selects the combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -524,7 +535,7 @@ class CombinationShapeKeyDriversSolo(bpy.types.Operator):
                             and driver_find(key, f'key_blocks["{shape.name}"].value') is not None)
         return False
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
 
@@ -544,27 +555,27 @@ class CombinationShapeKeyDriversSolo(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriverAdd(bpy.types.Operator):
+class CombinationShapeKeyDriverAdd(Operator):
     bl_idname = 'combination_shape_key.driver_add'
     bl_label = "Add Driver"
     bl_description = "Add a driver for the combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
-    name: bpy.props.StringProperty(
+    name: StringProperty(
         name="Name",
         description="Shape key to be used as a driver",
         default="",
         options=set()
         )
 
-    shapes: bpy.props.CollectionProperty(
+    shapes: CollectionProperty(
         name="Drivers",
         type=CombinationShapeKeyTarget,
         options=set()
         )
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         return (context.engine in COMPAT_ENGINES
                 and context.object is not None
                 and context.object.type in COMPAT_OBJECTS
@@ -574,7 +585,7 @@ class CombinationShapeKeyDriverAdd(bpy.types.Operator):
                 and context.object.data.shape_keys.is_property_set("combination_shape_keys")
                 and context.object.active_shape_key.name in context.object.data.shape_keys.combination_shape_keys)
 
-    def invoke(self, context: bpy.types.Context, event: bpy.types.Event) -> typing.Set[str]:
+    def invoke(self, context: 'Context', event: 'Event') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         ignore = [key.reference_key.name, shape.name]
@@ -592,12 +603,12 @@ class CombinationShapeKeyDriverAdd(bpy.types.Operator):
         self.name = ""
         return context.window_manager.invoke_props_dialog(self)
 
-    def draw(self, context: bpy.types.Context) -> None:
+    def draw(self, context: 'Context') -> None:
         layout = self.layout
         layout.activate_init = True
         layout.prop_search(self, "name", self, "shapes", text="", icon='SHAPEKEY_DATA')
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         target = key.key_blocks.get(self.name)
@@ -607,8 +618,8 @@ class CombinationShapeKeyDriverAdd(bpy.types.Operator):
             variables = driver_find(key, f'key_blocks["{shape.name}"].value').driver.variables
             variable = variables.new()
             
-            chars = string.ascii_letters
-            names = itertools.islice(itertools.product(chars, repeat=len(variables)//len(chars)+1), len(variables))
+            chars = ascii_letters
+            names = islice(product(chars, repeat=len(variables)//len(chars)+1), len(variables))
 
             variable.type = 'SINGLE_PROP'
             variable.name = "".join(tuple(names)[len(variables)-1])
@@ -621,14 +632,14 @@ class CombinationShapeKeyDriverAdd(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriverRemove(bpy.types.Operator):
+class CombinationShapeKeyDriverRemove(Operator):
     bl_idname = 'combination_shape_key.driver_remove'
     bl_label = "Remove Driver"
     bl_description = "Remove selected driver from the combination shape key"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -641,7 +652,7 @@ class CombinationShapeKeyDriverRemove(bpy.types.Operator):
                             fcurve = driver_find(key, f'key_blocks["{shape.name}"].value')
                             return fcurve is not None and data.active_driver_index < len(fcurve.driver.variables)
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         variables = driver_find(key, f'key_blocks["{shape.name}"].value').driver.variables
@@ -651,14 +662,14 @@ class CombinationShapeKeyDriverRemove(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriverMoveUp(bpy.types.Operator):
+class CombinationShapeKeyDriverMoveUp(Operator):
     bl_idname = 'combination_shape_key.driver_move_up'
     bl_label = "Move Up"
     bl_description = "Move the driver up within the list of drivers"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -674,7 +685,7 @@ class CombinationShapeKeyDriverMoveUp(bpy.types.Operator):
                                 return fcurve is not None and index < len(fcurve.driver.variables)
         return False
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         variables = driver_find(key, f'key_blocks["{shape.name}"].value').driver.variables
@@ -687,14 +698,14 @@ class CombinationShapeKeyDriverMoveUp(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CombinationShapeKeyDriverMoveDown(bpy.types.Operator):
+class CombinationShapeKeyDriverMoveDown(Operator):
     bl_idname = 'combination_shape_key.driver_move_down'
     bl_label = "Move Down"
     bl_description = "Move the driver down within the list of drivers"
     bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         if context.engine in COMPAT_ENGINES:
             object = context.object
             if object is not None and object.type in COMPAT_OBJECTS:
@@ -708,7 +719,7 @@ class CombinationShapeKeyDriverMoveDown(bpy.types.Operator):
                             return fcurve is not None and data.active_driver_index < len(fcurve.driver.variables) - 1
         return False
 
-    def execute(self, context: bpy.types.Context) -> typing.Set[str]:
+    def execute(self, context: 'Context') -> Set[str]:
         shape = context.object.active_shape_key
         key = shape.id_data
         variables = driver_find(key, f'key_blocks["{shape.name}"].value').driver.variables
@@ -725,13 +736,13 @@ class CombinationShapeKeyDriverMoveDown(bpy.types.Operator):
 #region User Interface
 ###################################################################################################
 
-def layout_split(layout: bpy.types.UILayout,
-                 label: typing.Optional[str]="",
-                 align: typing.Optional[bool]=False,
-                 factor: typing.Optional[float]=0.385,
-                 decorate: typing.Optional[bool]=True,
-                 decorate_fill: typing.Optional[bool]=True
-                 ) -> typing.Union[bpy.types.UILayout, typing.Tuple[bpy.types.UILayout, ...]]:
+def layout_split(layout: 'UILayout',
+                 label: Optional[str]="",
+                 align: Optional[bool]=False,
+                 factor: Optional[float]=0.385,
+                 decorate: Optional[bool]=True,
+                 decorate_fill: Optional[bool]=True
+                 ) -> Union['UILayout', Tuple['UILayout', ...]]:
     split = layout.row().split(factor=factor)
     col_a = split.column(align=align)
     col_a.alignment = 'RIGHT'
@@ -747,21 +758,15 @@ def layout_split(layout: bpy.types.UILayout,
             return (col_b, col_c) if label else (col_a, col_b, col_c)
     return col_b if label else (col_a, col_b)
 
-class CombinationShapeKeyDriverList(bpy.types.UIList):
+class CombinationShapeKeyDriverList(UIList):
 
     bl_idname = 'DATA_UL_combination_shape_key_drivers'
 
-    def draw_item(self,
-                  context: bpy.types.Context,
-                  layout: bpy.types.UILayout,
-                  data: bpy.types.ChannelDriverVariables,
-                  item: bpy.types.DriverVariable,
-                  icon, active_data, active_property, index, fltflag) -> None:
-
+    def draw_item(self, _0, layout: 'UILayout', _1, item: 'DriverVariable', _2, _3, _4, _5, _6) -> None:
         target = item.targets[0]
         key = target.id
         name = target.data_path[12:-8]
-        shape = key.key_blocks.get(name) if isinstance(key, bpy.types.Key) else None
+        shape = key.key_blocks.get(name) if isinstance(key, Key) else None
 
         row = layout.row()
         row.emboss = 'NONE_OR_STATUS'
@@ -775,10 +780,7 @@ class CombinationShapeKeyDriverList(bpy.types.UIList):
             subrow.alignment = 'RIGHT'
             subrow.prop(shape, "value", text="")
 
-    def filter_items(self,
-                     context: bpy.types.Context,
-                     data: bpy.types.Driver,
-                     propname: str) -> typing.Tuple[typing.List, typing.List]:
+    def filter_items(self, _: 'Context', data: 'Driver', propname: str) -> Tuple[List, List]:
         # The first variable of the driver is used as an internal reference to the
         # combination shape key manager, so it is filtered out for the purposes of
         # displaying the list of shape key drivers. The index order is kept as is
@@ -789,17 +791,11 @@ class CombinationShapeKeyDriverList(bpy.types.UIList):
         res_order = list(range(len(variables)))
         return res_flags, res_order
 
-class CombinationShapeKeyTargetList(bpy.types.UIList):
+class CombinationShapeKeyTargetList(UIList):
 
     bl_idname = 'DATA_UL_combination_shape_key_targets'
 
-    def draw_item(self,
-                  context: bpy.types.Context,
-                  layout: bpy.types.UILayout,
-                  data: bpy.types.CollectionProperty,
-                  item: CombinationShapeKeyTarget,
-                  icon, active_data, active_property, index, fltflag) -> None:
-
+    def draw_item(self, context: 'Context', layout: 'UILayout', _1, item: CombinationShapeKeyTarget, _2, _3, _4, _5, _6) -> None:
         row = layout.row()
         row.emboss = 'NONE_OR_STATUS'
         row.label(icon='SHAPEKEY_DATA', text=item.name)
@@ -812,7 +808,7 @@ class CombinationShapeKeyTargetList(bpy.types.UIList):
                  icon=f'CHECKBOX_{"" if item.is_selected else "DE"}HLT',
                  emboss=False)
 
-class CombinationShapeKeySettings(bpy.types.Panel):
+class CombinationShapeKeySettings(Panel):
 
     bl_parent_id = "DATA_PT_shape_keys"
     bl_idname = "DATA_PT_combination_shape_key_settings"
@@ -823,7 +819,7 @@ class CombinationShapeKeySettings(bpy.types.Panel):
     bl_context = 'data'
 
     @classmethod
-    def poll(cls, context: bpy.types.Context) -> bool:
+    def poll(cls, context: 'Context') -> bool:
         object = context.object
         if object is not None:
             shape = object.active_shape_key
@@ -833,7 +829,7 @@ class CombinationShapeKeySettings(bpy.types.Panel):
                         and shape.name in key.combination_shape_keys)
         return False
 
-    def draw(self, context: bpy.types.Context) -> None:
+    def draw(self, context: 'Context') -> None:
         obj = context.object
         key = obj.data.shape_keys
 
@@ -857,6 +853,8 @@ class CombinationShapeKeySettings(bpy.types.Panel):
         else:
             col = layout_split(layout, " ")
             col.operator(CombinationShapeKeyDriverAdd.bl_idname, icon='ADD', text="Add")
+
+        layout.separator()
 
         a, b, c = layout_split(layout, decorate_fill=False)
         a.label(text="Mode")
@@ -889,7 +887,7 @@ class CombinationShapeKeySettings(bpy.types.Panel):
         curve_mapping.draw_curve_manager_ui(col, target.falloff)
 
 
-def draw_menu_items(menu: bpy.types.Menu, context: bpy.types.Context) -> None:
+def draw_menu_items(menu: 'Menu', context: 'Context') -> None:
     object = context.object
     if object is not None:
         layout = menu.layout
@@ -927,7 +925,7 @@ CLASSES = [
     curve_mapping.BLCMAP_Curve,
     curve_mapping.BLCMAP_OT_curve_copy,
     curve_mapping.BLCMAP_OT_curve_paste,
-    curve_mapping.BLCMAP_OT_curve_edit,
+    curve_mapping.BLCMAP_OT_handle_type_set,
     curve_mapping.BLCMAP_OT_node_ensure,
     CombinationShapeKeyTargetFalloff,
     CombinationShapeKey,
@@ -982,7 +980,7 @@ def try_setup_combination_shape_keys():
 @bpy.app.handlers.persistent
 def load_post_handler(_=None) -> None:
     bpy.msgbus.clear_by_owner(MESSAGE_BROKER)
-    bpy.msgbus.subscribe_rna(key=(bpy.types.ShapeKey, "name"),
+    bpy.msgbus.subscribe_rna(key=(ShapeKey, "name"),
                              owner=MESSAGE_BROKER,
                              args=tuple(),
                              notify=shape_key_name_callback)
@@ -995,10 +993,12 @@ def load_post_handler(_=None) -> None:
         bpy.app.timers.register(try_setup_combination_shape_keys, first_interval=5)
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
+    from bpy.utils import register_class
 
-    bpy.types.Key.combination_shape_keys = bpy.props.CollectionProperty(
+    for cls in CLASSES:
+        register_class(cls)
+
+    Key.combination_shape_keys = CollectionProperty(
         name="Combination Shape Keys",
         type=CombinationShapeKey,
         options=set()
@@ -1010,21 +1010,21 @@ def register():
 
 def unregister():
     import sys
-    import operator
+    from bpy.utils import unregister_class
 
     bpy.msgbus.clear_by_owner(MESSAGE_BROKER)
     bpy.app.handlers.load_post.remove(load_post_handler)
     bpy.types.MESH_MT_shape_key_context_menu.remove(draw_menu_items)
 
     try:
-        del bpy.types.Key.combination_shape_keys
+        del Key.combination_shape_keys
     except: pass
 
     for cls in reversed(CLASSES):
-        bpy.utils.unregister_class(cls)
+        unregister_class(cls)
 
     modules_ = sys.modules 
-    modules_ = dict(sorted(modules_.items(), key=operator.itemgetter(0)))
+    modules_ = dict(sorted(modules_.items(), key=itemgetter(0)))
    
     for name in modules_.keys():
         if name.startswith(__name__):

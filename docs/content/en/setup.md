@@ -4,7 +4,7 @@ menuTitle: Creating CSKs
 description: 'Managing combination shape key addon for Blender'
 category: User Guide
 position: 4
-fullscreen: false
+fullscreen: true
 ---
 ## New Combination Shape Key
 
